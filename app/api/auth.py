@@ -22,33 +22,26 @@ class LoginResponse(BaseModel):
 
 @router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
-    logger.info(f"Login attempt for email: {request.email}")
+    try:
+        # Check admin first
+        admin_result = await db.execute(select(Admin).filter(Admin.email == request.email))
+        admin = admin_result.scalar_one_or_none()
 
-    admin_result = await db.execute(select(Admin).filter(Admin.email == request.email))
-    admin = admin_result.scalar_one_or_none()
-
-    if admin:
-        logger.info(f"Found admin with id: {admin.id}")
-        if verify_password(request.password, admin.hashed_password):
-            logger.info("Admin password verified, creating token")
+        if admin and verify_password(request.password, admin.hashed_password):
             token = create_access_token(data={"sub": admin.id, "type": "admin"})
-            logger.info(f"Admin login successful, returning token")
             return LoginResponse(access_token=token, token_type="bearer", user_type="admin")
-        else:
-            logger.warning("Admin password verification failed")
 
-    teacher_result = await db.execute(select(Teacher).filter(Teacher.email == request.email))
-    teacher = teacher_result.scalar_one_or_none()
+        # Check teacher
+        teacher_result = await db.execute(select(Teacher).filter(Teacher.email == request.email))
+        teacher = teacher_result.scalar_one_or_none()
 
-    if teacher:
-        logger.info(f"Found teacher with id: {teacher.id}")
-        if verify_password(request.password, teacher.hashed_password):
-            logger.info("Teacher password verified, creating token")
+        if teacher and verify_password(request.password, teacher.hashed_password):
             token = create_access_token(data={"sub": teacher.id, "type": "teacher"})
-            logger.info(f"Teacher login successful, returning token")
             return LoginResponse(access_token=token, token_type="bearer", user_type="teacher")
-        else:
-            logger.warning("Teacher password verification failed")
 
-    logger.error(f"Invalid credentials for email: {request.email}")
-    raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        raise HTTPException(status_code=500, detail="Login failed")

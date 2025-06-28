@@ -45,13 +45,9 @@ class TeacherStats(BaseModel):
 
 @router.get("/teachers", response_model=List[TeacherResponse])
 async def get_teachers(db: AsyncSession = Depends(get_db), admin_id: int = Depends(require_admin)):
-    logger.info(f"Getting teachers for admin_id: {admin_id}")
-
     try:
         result = await db.execute(select(Teacher).filter(Teacher.admin_id == admin_id))
-        teachers = result.scalars().all()
-        logger.info(f"Found {len(teachers)} teachers")
-        return teachers
+        return result.scalars().all()
     except Exception as e:
         logger.error(f"Error getting teachers: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving teachers")
@@ -60,10 +56,7 @@ async def get_teachers(db: AsyncSession = Depends(get_db), admin_id: int = Depen
 @router.post("/teachers", response_model=TeacherResponse)
 async def create_teacher(teacher: TeacherCreate, db: AsyncSession = Depends(get_db),
                          admin_id: int = Depends(require_admin)):
-    logger.info(f"Creating teacher for admin_id: {admin_id}")
-
     try:
-        # Check if email already exists
         existing_teacher = await db.execute(select(Teacher).filter(Teacher.email == teacher.email))
         if existing_teacher.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Email already registered")
@@ -78,8 +71,6 @@ async def create_teacher(teacher: TeacherCreate, db: AsyncSession = Depends(get_
         db.add(db_teacher)
         await db.commit()
         await db.refresh(db_teacher)
-
-        logger.info(f"Teacher created with id: {db_teacher.id}")
         return db_teacher
     except HTTPException:
         raise
@@ -92,15 +83,12 @@ async def create_teacher(teacher: TeacherCreate, db: AsyncSession = Depends(get_
 @router.put("/teachers/{teacher_id}", response_model=TeacherResponse)
 async def update_teacher(teacher_id: int, teacher: TeacherUpdate, db: AsyncSession = Depends(get_db),
                          admin_id: int = Depends(require_admin)):
-    logger.info(f"Updating teacher {teacher_id} for admin_id: {admin_id}")
-
     try:
         result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
         db_teacher = result.scalar_one_or_none()
         if not db_teacher:
             raise HTTPException(status_code=404, detail="Teacher not found")
 
-        # Check if email is being changed and if it already exists
         if teacher.email != db_teacher.email:
             existing_teacher = await db.execute(select(Teacher).filter(Teacher.email == teacher.email))
             if existing_teacher.scalar_one_or_none():
@@ -110,8 +98,6 @@ async def update_teacher(teacher_id: int, teacher: TeacherUpdate, db: AsyncSessi
         db_teacher.email = teacher.email
         await db.commit()
         await db.refresh(db_teacher)
-
-        logger.info(f"Teacher {teacher_id} updated successfully")
         return db_teacher
     except HTTPException:
         raise
@@ -124,8 +110,6 @@ async def update_teacher(teacher_id: int, teacher: TeacherUpdate, db: AsyncSessi
 @router.delete("/teachers/{teacher_id}")
 async def delete_teacher(teacher_id: int, db: AsyncSession = Depends(get_db),
                          admin_id: int = Depends(require_admin)):
-    logger.info(f"Deleting teacher {teacher_id} for admin_id: {admin_id}")
-
     try:
         result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
         db_teacher = result.scalar_one_or_none()
@@ -134,8 +118,6 @@ async def delete_teacher(teacher_id: int, db: AsyncSession = Depends(get_db),
 
         await db.delete(db_teacher)
         await db.commit()
-
-        logger.info(f"Teacher {teacher_id} deleted successfully")
         return {"message": "Teacher deleted"}
     except HTTPException:
         raise
@@ -148,17 +130,13 @@ async def delete_teacher(teacher_id: int, db: AsyncSession = Depends(get_db),
 @router.get("/teachers/{teacher_id}/stats", response_model=TeacherStats)
 async def get_teacher_stats(teacher_id: int, db: AsyncSession = Depends(get_db),
                             admin_id: int = Depends(require_admin)):
-    logger.info(f"Getting stats for teacher {teacher_id} for admin_id: {admin_id}")
-
     try:
-        # Verify teacher belongs to admin
         teacher_result = await db.execute(
             select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
         teacher = teacher_result.scalar_one_or_none()
         if not teacher:
             raise HTTPException(status_code=404, detail="Teacher not found")
 
-        # Get statistics
         groups_count = await db.execute(select(func.count(Group.id)).filter(Group.teacher_id == teacher_id))
 
         students_count = await db.execute(
@@ -187,16 +165,13 @@ async def get_teacher_stats(teacher_id: int, db: AsyncSession = Depends(get_db),
             .filter(Group.teacher_id == teacher_id)
         )
 
-        stats = TeacherStats(
+        return TeacherStats(
             groups=groups_count.scalar() or 0,
             students=students_count.scalar() or 0,
             modules=modules_count.scalar() or 0,
             lessons=lessons_count.scalar() or 0,
             total_grades=grades_count.scalar() or 0
         )
-
-        logger.info(f"Stats retrieved for teacher {teacher_id}: {stats}")
-        return stats
     except HTTPException:
         raise
     except Exception as e:

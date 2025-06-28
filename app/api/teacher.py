@@ -91,13 +91,9 @@ class GradeResponse(BaseModel):
 # Groups
 @router.get("/groups", response_model=List[GroupResponse])
 async def get_groups(db: AsyncSession = Depends(get_db), teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Getting groups for teacher_id: {teacher_id}")
-
     try:
         result = await db.execute(select(Group).filter(Group.teacher_id == teacher_id))
-        groups = result.scalars().all()
-        logger.info(f"Found {len(groups)} groups")
-        return groups
+        return result.scalars().all()
     except Exception as e:
         logger.error(f"Error getting groups: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving groups")
@@ -106,16 +102,12 @@ async def get_groups(db: AsyncSession = Depends(get_db), teacher_id: int = Depen
 @router.post("/groups", response_model=GroupResponse)
 async def create_group(group: GroupCreate, db: AsyncSession = Depends(get_db),
                        teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Creating group '{group.name}' for teacher_id: {teacher_id}")
-
     try:
-        # Check group limit
         groups_count = await db.execute(
             select(func.count(Group.id)).filter(Group.teacher_id == teacher_id, Group.is_active == True))
         if groups_count.scalar() >= 6:
             raise HTTPException(status_code=400, detail="Maximum 6 active groups allowed")
 
-        # Generate unique code
         code = generate_group_code()
         while True:
             existing_group = await db.execute(select(Group).filter(Group.code == code))
@@ -127,8 +119,6 @@ async def create_group(group: GroupCreate, db: AsyncSession = Depends(get_db),
         db.add(db_group)
         await db.commit()
         await db.refresh(db_group)
-
-        logger.info(f"Group created with id: {db_group.id}, code: {code}")
         return db_group
     except HTTPException:
         raise
@@ -140,9 +130,7 @@ async def create_group(group: GroupCreate, db: AsyncSession = Depends(get_db),
 
 @router.delete("/groups/{group_id}")
 async def delete_group(group_id: int, db: AsyncSession = Depends(get_db),
-                       teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Deleting group {group_id} for teacher_id: {teacher_id}")
-
+                      teacher_id: int = Depends(require_teacher)):
     try:
         result = await db.execute(select(Group).filter(Group.id == group_id, Group.teacher_id == teacher_id))
         db_group = result.scalar_one_or_none()
@@ -151,8 +139,6 @@ async def delete_group(group_id: int, db: AsyncSession = Depends(get_db),
 
         await db.delete(db_group)
         await db.commit()
-
-        logger.info(f"Group {group_id} deleted successfully")
         return {"message": "Group deleted"}
     except HTTPException:
         raise
@@ -164,9 +150,7 @@ async def delete_group(group_id: int, db: AsyncSession = Depends(get_db),
 
 @router.post("/groups/{group_id}/finish")
 async def finish_group(group_id: int, db: AsyncSession = Depends(get_db),
-                       teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Finishing group {group_id} for teacher_id: {teacher_id}")
-
+                      teacher_id: int = Depends(require_teacher)):
     try:
         result = await db.execute(select(Group).filter(Group.id == group_id, Group.teacher_id == teacher_id))
         db_group = result.scalar_one_or_none()
@@ -175,8 +159,6 @@ async def finish_group(group_id: int, db: AsyncSession = Depends(get_db),
 
         db_group.is_active = False
         await db.commit()
-
-        logger.info(f"Group {group_id} finished successfully")
         return {"message": "Group finished"}
     except HTTPException:
         raise
@@ -189,19 +171,14 @@ async def finish_group(group_id: int, db: AsyncSession = Depends(get_db),
 # Students
 @router.get("/groups/{group_id}/students", response_model=List[StudentResponse])
 async def get_students(group_id: int, db: AsyncSession = Depends(get_db),
-                       teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Getting students for group {group_id}, teacher_id: {teacher_id}")
-
+                      teacher_id: int = Depends(require_teacher)):
     try:
-        # Verify group ownership
         group_result = await db.execute(select(Group).filter(Group.id == group_id, Group.teacher_id == teacher_id))
         if not group_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Group not found")
 
         result = await db.execute(select(Student).filter(Student.group_id == group_id))
-        students = result.scalars().all()
-        logger.info(f"Found {len(students)} students")
-        return students
+        return result.scalars().all()
     except HTTPException:
         raise
     except Exception as e:
@@ -212,15 +189,11 @@ async def get_students(group_id: int, db: AsyncSession = Depends(get_db),
 @router.post("/groups/{group_id}/students", response_model=StudentResponse)
 async def create_student(group_id: int, student: StudentCreate, db: AsyncSession = Depends(get_db),
                          teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Creating student '{student.full_name}' in group {group_id}")
-
     try:
-        # Verify group ownership
         group_result = await db.execute(select(Group).filter(Group.id == group_id, Group.teacher_id == teacher_id))
         if not group_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Group not found")
 
-        # Check student limit
         students_count = await db.execute(select(func.count(Student.id)).filter(Student.group_id == group_id))
         if students_count.scalar() >= 30:
             raise HTTPException(status_code=400, detail="Maximum 30 students allowed per group")
@@ -229,8 +202,6 @@ async def create_student(group_id: int, student: StudentCreate, db: AsyncSession
         db.add(db_student)
         await db.commit()
         await db.refresh(db_student)
-
-        logger.info(f"Student created with id: {db_student.id}")
         return db_student
     except HTTPException:
         raise
@@ -243,8 +214,6 @@ async def create_student(group_id: int, student: StudentCreate, db: AsyncSession
 @router.delete("/students/{student_id}")
 async def delete_student(student_id: int, db: AsyncSession = Depends(get_db),
                          teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Deleting student {student_id} for teacher_id: {teacher_id}")
-
     try:
         result = await db.execute(
             select(Student)
@@ -257,8 +226,6 @@ async def delete_student(student_id: int, db: AsyncSession = Depends(get_db),
 
         await db.delete(db_student)
         await db.commit()
-
-        logger.info(f"Student {student_id} deleted successfully")
         return {"message": "Student deleted"}
     except HTTPException:
         raise
@@ -271,19 +238,14 @@ async def delete_student(student_id: int, db: AsyncSession = Depends(get_db),
 # Modules
 @router.get("/groups/{group_id}/modules", response_model=List[ModuleResponse])
 async def get_modules(group_id: int, db: AsyncSession = Depends(get_db),
-                      teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Getting modules for group {group_id}, teacher_id: {teacher_id}")
-
+                     teacher_id: int = Depends(require_teacher)):
     try:
-        # Verify group ownership
         group_result = await db.execute(select(Group).filter(Group.id == group_id, Group.teacher_id == teacher_id))
         if not group_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Group not found")
 
         result = await db.execute(select(Module).filter(Module.group_id == group_id))
-        modules = result.scalars().all()
-        logger.info(f"Found {len(modules)} modules")
-        return modules
+        return result.scalars().all()
     except HTTPException:
         raise
     except Exception as e:
@@ -294,15 +256,11 @@ async def get_modules(group_id: int, db: AsyncSession = Depends(get_db),
 @router.post("/groups/{group_id}/modules", response_model=ModuleResponse)
 async def create_module(group_id: int, module: ModuleCreate, db: AsyncSession = Depends(get_db),
                         teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Creating module '{module.name}' in group {group_id}")
-
     try:
-        # Verify group ownership
         group_result = await db.execute(select(Group).filter(Group.id == group_id, Group.teacher_id == teacher_id))
         if not group_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Group not found")
 
-        # Check for active module
         active_module = await db.execute(select(Module).filter(Module.group_id == group_id, Module.is_active == True))
         if active_module.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Only one active module allowed per group")
@@ -311,8 +269,6 @@ async def create_module(group_id: int, module: ModuleCreate, db: AsyncSession = 
         db.add(db_module)
         await db.commit()
         await db.refresh(db_module)
-
-        logger.info(f"Module created with id: {db_module.id}")
         return db_module
     except HTTPException:
         raise
@@ -324,9 +280,7 @@ async def create_module(group_id: int, module: ModuleCreate, db: AsyncSession = 
 
 @router.post("/modules/{module_id}/finish")
 async def finish_module(module_id: int, db: AsyncSession = Depends(get_db),
-                        teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Finishing module {module_id} for teacher_id: {teacher_id}")
-
+                       teacher_id: int = Depends(require_teacher)):
     try:
         result = await db.execute(
             select(Module)
@@ -340,8 +294,6 @@ async def finish_module(module_id: int, db: AsyncSession = Depends(get_db),
         db_module.is_active = False
         db_module.is_finished = True
         await db.commit()
-
-        logger.info(f"Module {module_id} finished successfully")
         return {"message": "Module finished"}
     except HTTPException:
         raise
@@ -354,11 +306,8 @@ async def finish_module(module_id: int, db: AsyncSession = Depends(get_db),
 # Lessons
 @router.get("/modules/{module_id}/lessons", response_model=List[LessonResponse])
 async def get_lessons(module_id: int, db: AsyncSession = Depends(get_db),
-                      teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Getting lessons for module {module_id}, teacher_id: {teacher_id}")
-
+                     teacher_id: int = Depends(require_teacher)):
     try:
-        # Verify module ownership
         module_result = await db.execute(
             select(Module)
             .join(Group, Module.group_id == Group.id)
@@ -368,9 +317,7 @@ async def get_lessons(module_id: int, db: AsyncSession = Depends(get_db),
             raise HTTPException(status_code=404, detail="Module not found")
 
         result = await db.execute(select(Lesson).filter(Lesson.module_id == module_id))
-        lessons = result.scalars().all()
-        logger.info(f"Found {len(lessons)} lessons")
-        return lessons
+        return result.scalars().all()
     except HTTPException:
         raise
     except Exception as e:
@@ -381,10 +328,7 @@ async def get_lessons(module_id: int, db: AsyncSession = Depends(get_db),
 @router.post("/modules/{module_id}/lessons", response_model=LessonResponse)
 async def create_lesson(module_id: int, lesson: LessonCreate, db: AsyncSession = Depends(get_db),
                         teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Creating lesson '{lesson.name}' in module {module_id}")
-
     try:
-        # Verify module ownership and active status
         module_result = await db.execute(
             select(Module)
             .join(Group, Module.group_id == Group.id)
@@ -393,7 +337,6 @@ async def create_lesson(module_id: int, lesson: LessonCreate, db: AsyncSession =
         if not module_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Active module not found")
 
-        # Check lesson limit
         lessons_count = await db.execute(select(func.count(Lesson.id)).filter(Lesson.module_id == module_id))
         if lessons_count.scalar() >= 15:
             raise HTTPException(status_code=400, detail="Maximum 15 lessons allowed per module")
@@ -403,8 +346,6 @@ async def create_lesson(module_id: int, lesson: LessonCreate, db: AsyncSession =
         db.add(db_lesson)
         await db.commit()
         await db.refresh(db_lesson)
-
-        logger.info(f"Lesson created with id: {db_lesson.id}, number: {lesson_number}")
         return db_lesson
     except HTTPException:
         raise
@@ -417,11 +358,8 @@ async def create_lesson(module_id: int, lesson: LessonCreate, db: AsyncSession =
 # Criteria
 @router.get("/modules/{module_id}/criteria", response_model=List[CriteriaResponse])
 async def get_criteria(module_id: int, db: AsyncSession = Depends(get_db),
-                       teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Getting criteria for module {module_id}, teacher_id: {teacher_id}")
-
+                      teacher_id: int = Depends(require_teacher)):
     try:
-        # Verify module ownership
         module_result = await db.execute(
             select(Module)
             .join(Group, Module.group_id == Group.id)
@@ -431,9 +369,7 @@ async def get_criteria(module_id: int, db: AsyncSession = Depends(get_db),
             raise HTTPException(status_code=404, detail="Module not found")
 
         result = await db.execute(select(Criteria).filter(Criteria.module_id == module_id))
-        criteria = result.scalars().all()
-        logger.info(f"Found {len(criteria)} criteria")
-        return criteria
+        return result.scalars().all()
     except HTTPException:
         raise
     except Exception as e:
@@ -444,10 +380,7 @@ async def get_criteria(module_id: int, db: AsyncSession = Depends(get_db),
 @router.post("/modules/{module_id}/criteria", response_model=CriteriaResponse)
 async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSession = Depends(get_db),
                           teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Creating criteria '{criteria.name}' in module {module_id}")
-
     try:
-        # Verify module ownership and active status
         module_result = await db.execute(
             select(Module)
             .join(Group, Module.group_id == Group.id)
@@ -456,12 +389,10 @@ async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSes
         if not module_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Active module not found")
 
-        # Check criteria limit
         criteria_count = await db.execute(select(func.count(Criteria.id)).filter(Criteria.module_id == module_id))
         if criteria_count.scalar() >= 6:
             raise HTTPException(status_code=400, detail="Maximum 6 criteria allowed per module")
 
-        # Validate grading method
         try:
             grading_method = GradingMethod(criteria.grading_method)
         except ValueError:
@@ -476,8 +407,6 @@ async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSes
         db.add(db_criteria)
         await db.commit()
         await db.refresh(db_criteria)
-
-        logger.info(f"Criteria created with id: {db_criteria.id}")
         return db_criteria
     except HTTPException:
         raise
@@ -491,10 +420,7 @@ async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSes
 @router.post("/grades", response_model=GradeResponse)
 async def create_grade(grade: GradeCreate, db: AsyncSession = Depends(get_db),
                        teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Creating/updating grade for teacher_id: {teacher_id}")
-
     try:
-        # Verify lesson ownership and module active status
         lesson_result = await db.execute(
             select(Lesson)
             .join(Module, Lesson.module_id == Module.id)
@@ -504,7 +430,6 @@ async def create_grade(grade: GradeCreate, db: AsyncSession = Depends(get_db),
         if not lesson_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Lesson not found or module not active")
 
-        # Check if grade already exists
         existing_grade = await db.execute(
             select(Grade).filter(
                 Grade.student_id == grade.student_id,
@@ -515,14 +440,10 @@ async def create_grade(grade: GradeCreate, db: AsyncSession = Depends(get_db),
 
         db_grade = existing_grade.scalar_one_or_none()
         if db_grade:
-            # Update existing grade
             db_grade.points_earned = grade.points_earned
-            logger.info(f"Updated existing grade id: {db_grade.id}")
         else:
-            # Create new grade
             db_grade = Grade(**grade.dict())
             db.add(db_grade)
-            logger.info("Created new grade")
 
         await db.commit()
         await db.refresh(db_grade)
@@ -538,10 +459,7 @@ async def create_grade(grade: GradeCreate, db: AsyncSession = Depends(get_db),
 @router.get("/modules/{module_id}/leaderboard")
 async def get_leaderboard(module_id: int, db: AsyncSession = Depends(get_db),
                           teacher_id: int = Depends(require_teacher)):
-    logger.info(f"Getting leaderboard for module {module_id}, teacher_id: {teacher_id}")
-
     try:
-        # Verify module ownership
         module_result = await db.execute(
             select(Module)
             .join(Group, Module.group_id == Group.id)
@@ -550,9 +468,7 @@ async def get_leaderboard(module_id: int, db: AsyncSession = Depends(get_db),
         if not module_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Module not found")
 
-        leaderboard = await calculate_student_totals(db, module_id)
-        logger.info(f"Generated leaderboard with {len(leaderboard)} entries")
-        return leaderboard
+        return await calculate_student_totals(db, module_id)
     except HTTPException:
         raise
     except Exception as e:
