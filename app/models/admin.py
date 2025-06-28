@@ -5,7 +5,7 @@ from ..core.database import Base
 
 
 class Admin(Base):
-    __tablename__ = "admins"
+    __tablename__ = "gt_admins"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
