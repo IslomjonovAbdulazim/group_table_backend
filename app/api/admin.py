@@ -4,7 +4,7 @@ from sqlalchemy import select, func
 from pydantic import BaseModel
 from typing import List
 from ..core.database import get_db
-from ..core.auth import get_password_hash, verify_token
+from ..core.auth import get_password_hash, require_admin
 from ..models.admin import Admin
 from ..models.teacher import Teacher
 from ..models.group import Group
@@ -43,198 +43,162 @@ class TeacherStats(BaseModel):
     total_grades: int
 
 
-def require_admin(token_data: dict = Depends(verify_token)):
-    logger.info(f"Admin check - received token_data: {token_data}")
-    logger.info(
-        f"Token data types - user_id: {type(token_data.get('user_id'))}, user_type: {type(token_data.get('user_type'))}")
-
-    if token_data["user_type"] != "admin":
-        logger.error(f"Access denied - user_type is {token_data['user_type']}, expected 'admin'")
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    user_id = token_data["user_id"]
-    if isinstance(user_id, str):
-        logger.warning(f"user_id is string '{user_id}', converting to int")
-        user_id = int(user_id)
-
-    logger.info(f"Admin access granted for user_id: {user_id} (type: {type(user_id)})")
-    return user_id
-
-
 @router.get("/teachers", response_model=List[TeacherResponse])
 async def get_teachers(db: AsyncSession = Depends(get_db), admin_id: int = Depends(require_admin)):
-    logger.info(f"Getting teachers for admin_id: {admin_id}, type: {type(admin_id)}")
-    admin_id = int(admin_id) if isinstance(admin_id, str) else admin_id
-    logger.info(f"After conversion - admin_id: {admin_id}, type: {type(admin_id)}")
-    result = await db.execute(select(Teacher).filter(Teacher.admin_id == admin_id))
-    teachers = result.scalars().all()
-    logger.info(f"Found {len(teachers)} teachers")
-    return teachers
+    logger.info(f"Getting teachers for admin_id: {admin_id}")
+
+    try:
+        result = await db.execute(select(Teacher).filter(Teacher.admin_id == admin_id))
+        teachers = result.scalars().all()
+        logger.info(f"Found {len(teachers)} teachers")
+        return teachers
+    except Exception as e:
+        logger.error(f"Error getting teachers: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving teachers")
 
 
 @router.post("/teachers", response_model=TeacherResponse)
 async def create_teacher(teacher: TeacherCreate, db: AsyncSession = Depends(get_db),
                          admin_id: int = Depends(require_admin)):
-    hashed_password = get_password_hash(teacher.password)
-    db_teacher = Teacher(
-        name=teacher.name,
-        email=teacher.email,
-        hashed_password=hashed_password,
-        admin_id=admin_id
-    )
-    db.add(db_teacher)
-    await db.commit()
-    await db.refresh(db_teacher)
-    return db_teacher
+    logger.info(f"Creating teacher for admin_id: {admin_id}")
+
+    try:
+        # Check if email already exists
+        existing_teacher = await db.execute(select(Teacher).filter(Teacher.email == teacher.email))
+        if existing_teacher.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+        hashed_password = get_password_hash(teacher.password)
+        db_teacher = Teacher(
+            name=teacher.name,
+            email=teacher.email,
+            hashed_password=hashed_password,
+            admin_id=admin_id
+        )
+        db.add(db_teacher)
+        await db.commit()
+        await db.refresh(db_teacher)
+
+        logger.info(f"Teacher created with id: {db_teacher.id}")
+        return db_teacher
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating teacher: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Error creating teacher")
 
 
 @router.put("/teachers/{teacher_id}", response_model=TeacherResponse)
 async def update_teacher(teacher_id: int, teacher: TeacherUpdate, db: AsyncSession = Depends(get_db),
                          admin_id: int = Depends(require_admin)):
-    result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
-    db_teacher = result.scalar_one_or_none()
-    if not db_teacher:
-        raise HTTPException(status_code=404, detail="Teacher not found")
+    logger.info(f"Updating teacher {teacher_id} for admin_id: {admin_id}")
 
-    db_teacher.name = teacher.name
-    db_teacher.email = teacher.email
-    await db.commit()
-    await db.refresh(db_teacher)
-    return db_teacher
+    try:
+        result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
+        db_teacher = result.scalar_one_or_none()
+        if not db_teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        # Check if email is being changed and if it already exists
+        if teacher.email != db_teacher.email:
+            existing_teacher = await db.execute(select(Teacher).filter(Teacher.email == teacher.email))
+            if existing_teacher.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Email already registered")
+
+        db_teacher.name = teacher.name
+        db_teacher.email = teacher.email
+        await db.commit()
+        await db.refresh(db_teacher)
+
+        logger.info(f"Teacher {teacher_id} updated successfully")
+        return db_teacher
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating teacher: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Error updating teacher")
 
 
 @router.delete("/teachers/{teacher_id}")
-async def delete_teacher(teacher_id: int, db: AsyncSession = Depends(get_db), admin_id: int = Depends(require_admin)):
-    result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
-    db_teacher = result.scalar_one_or_none()
-    if not db_teacher:
-        raise HTTPException(status_code=404, detail="Teacher not found")
+async def delete_teacher(teacher_id: int, db: AsyncSession = Depends(get_db),
+                         admin_id: int = Depends(require_admin)):
+    logger.info(f"Deleting teacher {teacher_id} for admin_id: {admin_id}")
 
-    await db.delete(db_teacher)
-    await db.commit()
-    return {"message": "Teacher deleted"}
+    try:
+        result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
+        db_teacher = result.scalar_one_or_none()
+        if not db_teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        await db.delete(db_teacher)
+        await db.commit()
+
+        logger.info(f"Teacher {teacher_id} deleted successfully")
+        return {"message": "Teacher deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting teacher: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Error deleting teacher")
 
 
 @router.get("/teachers/{teacher_id}/stats", response_model=TeacherStats)
 async def get_teacher_stats(teacher_id: int, db: AsyncSession = Depends(get_db),
                             admin_id: int = Depends(require_admin)):
-    teacher_result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
-    teacher = teacher_result.scalar_one_or_none()
-    if not teacher:
-        raise HTTPException(status_code=404, detail="Teacher not found")
+    logger.info(f"Getting stats for teacher {teacher_id} for admin_id: {admin_id}")
 
-    groups_count = await db.execute(select(func.count(Group.id)).filter(Group.teacher_id == teacher_id))
-    students_count = await db.execute(
-        select(func.count(Student.id))
-        .join(Group, Student.group_id == Group.id)
-        .filter(Group.teacher_id == teacher_id)
-    )
-    modules_count = await db.execute(
-        select(func.count(Module.id))
-        .join(Group, Module.group_id == Group.id)
-        .filter(Group.teacher_id == teacher_id)
-    )
-    lessons_count = await db.execute(
-        select(func.count(Lesson.id))
-        .join(Module, Lesson.module_id == Module.id)
-        .join(Group, Module.group_id == Group.id)
-        .filter(Group.teacher_id == teacher_id)
-    )
-    grades_count = await db.execute(
-        select(func.count(Grade.id))
-        .join(Student, Grade.student_id == Student.id)
-        .join(Group, Student.group_id == Group.id)
-        .filter(Group.teacher_id == teacher_id)
-    )
+    try:
+        # Verify teacher belongs to admin
+        teacher_result = await db.execute(
+            select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
+        teacher = teacher_result.scalar_one_or_none()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
 
-    return TeacherStats(
-        groups=groups_count.scalar() or 0,
-        students=students_count.scalar() or 0,
-        modules=modules_count.scalar() or 0,
-        lessons=lessons_count.scalar() or 0,
-        total_grades=grades_count.scalar() or 0
-    )
+        # Get statistics
+        groups_count = await db.execute(select(func.count(Group.id)).filter(Group.teacher_id == teacher_id))
 
+        students_count = await db.execute(
+            select(func.count(Student.id))
+            .join(Group, Student.group_id == Group.id)
+            .filter(Group.teacher_id == teacher_id)
+        )
 
-@router.post("/teachers", response_model=TeacherResponse)
-async def create_teacher(teacher: TeacherCreate, db: AsyncSession = Depends(get_db),
-                         admin_id: int = Depends(require_admin)):
-    hashed_password = get_password_hash(teacher.password)
-    db_teacher = Teacher(
-        name=teacher.name,
-        email=teacher.email,
-        hashed_password=hashed_password,
-        admin_id=admin_id
-    )
-    db.add(db_teacher)
-    await db.commit()
-    await db.refresh(db_teacher)
-    return db_teacher
+        modules_count = await db.execute(
+            select(func.count(Module.id))
+            .join(Group, Module.group_id == Group.id)
+            .filter(Group.teacher_id == teacher_id)
+        )
 
+        lessons_count = await db.execute(
+            select(func.count(Lesson.id))
+            .join(Module, Lesson.module_id == Module.id)
+            .join(Group, Module.group_id == Group.id)
+            .filter(Group.teacher_id == teacher_id)
+        )
 
-@router.put("/teachers/{teacher_id}", response_model=TeacherResponse)
-async def update_teacher(teacher_id: int, teacher: TeacherUpdate, db: AsyncSession = Depends(get_db),
-                         admin_id: int = Depends(require_admin)):
-    result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
-    db_teacher = result.scalar_one_or_none()
-    if not db_teacher:
-        raise HTTPException(status_code=404, detail="Teacher not found")
+        grades_count = await db.execute(
+            select(func.count(Grade.id))
+            .join(Student, Grade.student_id == Student.id)
+            .join(Group, Student.group_id == Group.id)
+            .filter(Group.teacher_id == teacher_id)
+        )
 
-    db_teacher.name = teacher.name
-    db_teacher.email = teacher.email
-    await db.commit()
-    await db.refresh(db_teacher)
-    return db_teacher
+        stats = TeacherStats(
+            groups=groups_count.scalar() or 0,
+            students=students_count.scalar() or 0,
+            modules=modules_count.scalar() or 0,
+            lessons=lessons_count.scalar() or 0,
+            total_grades=grades_count.scalar() or 0
+        )
 
-
-@router.delete("/teachers/{teacher_id}")
-async def delete_teacher(teacher_id: int, db: AsyncSession = Depends(get_db), admin_id: int = Depends(require_admin)):
-    result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
-    db_teacher = result.scalar_one_or_none()
-    if not db_teacher:
-        raise HTTPException(status_code=404, detail="Teacher not found")
-
-    await db.delete(db_teacher)
-    await db.commit()
-    return {"message": "Teacher deleted"}
-
-
-@router.get("/teachers/{teacher_id}/stats", response_model=TeacherStats)
-async def get_teacher_stats(teacher_id: int, db: AsyncSession = Depends(get_db),
-                            admin_id: int = Depends(require_admin)):
-    teacher_result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
-    teacher = teacher_result.scalar_one_or_none()
-    if not teacher:
-        raise HTTPException(status_code=404, detail="Teacher not found")
-
-    groups_count = await db.execute(select(func.count(Group.id)).filter(Group.teacher_id == teacher_id))
-    students_count = await db.execute(
-        select(func.count(Student.id))
-        .join(Group, Student.group_id == Group.id)
-        .filter(Group.teacher_id == teacher_id)
-    )
-    modules_count = await db.execute(
-        select(func.count(Module.id))
-        .join(Group, Module.group_id == Group.id)
-        .filter(Group.teacher_id == teacher_id)
-    )
-    lessons_count = await db.execute(
-        select(func.count(Lesson.id))
-        .join(Module, Lesson.module_id == Module.id)
-        .join(Group, Module.group_id == Group.id)
-        .filter(Group.teacher_id == teacher_id)
-    )
-    grades_count = await db.execute(
-        select(func.count(Grade.id))
-        .join(Student, Grade.student_id == Student.id)
-        .join(Group, Student.group_id == Group.id)
-        .filter(Group.teacher_id == teacher_id)
-    )
-
-    return TeacherStats(
-        groups=groups_count.scalar() or 0,
-        students=students_count.scalar() or 0,
-        modules=modules_count.scalar() or 0,
-        lessons=lessons_count.scalar() or 0,
-        total_grades=grades_count.scalar() or 0
-    )
+        logger.info(f"Stats retrieved for teacher {teacher_id}: {stats}")
+        return stats
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting teacher stats: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving teacher statistics")
