@@ -12,7 +12,7 @@ from ..models.lesson import Lesson
 from ..models.criteria import Criteria, GradingMethod
 from ..models.grade import Grade
 from ..models.teacher import Teacher
-from ..utils.code_generator import generate_unique_group_code
+from ..utils.code_generator import generate_group_code
 from ..utils.calculations import calculate_student_totals
 import logging
 
@@ -129,16 +129,10 @@ async def create_group(group: GroupCreate, db: AsyncSession = Depends(get_db),
         if groups_count.scalar() >= 6:
             raise HTTPException(status_code=400, detail="Maximum 6 active groups allowed")
 
-        # Generate smart, memorable group code
-        # Choose your preferred strategy:
-        code = await generate_unique_group_code(db, teacher_id, strategy="human_friendly")
+        # Generate incremental group code
+        code = await generate_group_code(db)
 
-        # Alternative strategies you can try:
-        # code = await generate_unique_group_code(db, teacher_id, strategy="incremental")
-        # code = await generate_unique_group_code(db, teacher_id, strategy="teacher_based")
-        # code = await generate_unique_group_code(db, teacher_id, strategy="random")
-
-        logger.info(f"🔄 Generated group code: {code} for teacher {teacher_id}")
+        logger.info(f"🔄 Generated incremental group code: {code}")
 
         db_group = Group(name=group.name, code=code, teacher_id=teacher_id)
         db.add(db_group)
@@ -154,6 +148,7 @@ async def create_group(group: GroupCreate, db: AsyncSession = Depends(get_db),
         logger.error(f"Error creating group: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail="Error creating group")
+
 @router.put("/groups/{group_id}", response_model=GroupResponse)
 async def update_group(group_id: int, group: GroupUpdate, db: AsyncSession = Depends(get_db),
                        teacher_id: int = Depends(require_teacher)):

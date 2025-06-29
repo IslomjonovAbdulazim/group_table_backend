@@ -1,182 +1,80 @@
-import secrets
-import string
-from typing import Optional
+# Replace your app/utils/code_generator.py with this simple version:
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from ..models.group import Group
 
 
-class GroupCodeGenerator:
-    """Smart group code generator with memorable patterns"""
+def generate_incremental_code(group_id: int) -> str:
+    """
+    Generate memorable incremental group codes:
+    1-9: A1, B2, C3, D4, E5, F6, G7, H8, I9
+    10-35: A10, A11, A12, ..., A35
+    36-61: B10, B11, B12, ..., B35  
+    62-87: C10, C11, C12, ..., C35
+    And so on...
 
-    @staticmethod
-    def base36_encode(number: int) -> str:
-        """Convert number to base36 (0-9, A-Z)"""
-        if number == 0:
-            return '0'
+    For 100+: A100, A101, etc.
+    For 1000+: AA01, AA02, etc.
+    """
 
-        alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-        result = ''
-        while number:
-            number, remainder = divmod(number, 36)
-            result = alphabet[remainder] + result
-        return result
+    if group_id <= 9:
+        # Single letter + single digit: A1, B2, C3, etc.
+        letter = chr(ord('A') + (group_id - 1))
+        return f"{letter}{group_id}"
 
-    @staticmethod
-    def generate_incremental_code(group_id: int) -> str:
-        """Generate memorable code based on group ID with incremental pattern"""
+    elif group_id <= 35:
+        # A + two digits: A10, A11, A12, ..., A35
+        number = group_id
+        return f"A{number}"
 
-        if group_id <= 9:
-            # A1, B2, C3, etc. (single letter + digit)
-            letter = chr(ord('A') + (group_id - 1) % 26)
-            return f"{letter}{group_id}"
-
-        elif group_id <= 99:
-            # A10, A11, ..., A99, B10, B11, etc. (letter + 2 digits)
-            letter = chr(ord('A') + ((group_id - 10) // 90) % 26)
-            number = ((group_id - 10) % 90) + 10
+    elif group_id <= 999:
+        # B10, B11, ..., B35, C10, C11, ..., C35, etc.
+        # Then A100, A101, etc.
+        if group_id <= 35 + (25 * 26):  # Up to Z35
+            adjusted_id = group_id - 36
+            letter = chr(ord('B') + (adjusted_id // 26))
+            number = (adjusted_id % 26) + 10
             return f"{letter}{number}"
-
-        elif group_id <= 999:
-            # A100, A101, ..., A999, B100, etc. (letter + 3 digits)
+        else:
+            # A100, A101, A102, etc.
             letter = chr(ord('A') + ((group_id - 100) // 900) % 26)
-            number = ((group_id - 100) % 900) + 100
+            number = group_id
             return f"{letter}{number}"
 
-        elif group_id <= 9999:
-            # AA1, AA2, ..., AA99, AB1, etc. (2 letters + 2 digits)
-            first_letter = chr(ord('A') + ((group_id - 1000) // (26 * 99)) % 26)
-            second_letter = chr(ord('A') + ((group_id - 1000) // 99) % 26)
-            number = ((group_id - 1000) % 99) + 1
-            return f"{first_letter}{second_letter}{number:02d}"
-
-        else:
-            # For very large IDs, use base36 encoding
-            return GroupCodeGenerator.base36_encode(group_id)
-
-    @staticmethod
-    def generate_teacher_based_code(teacher_id: int, group_sequence: int) -> str:
-        """Generate code based on teacher ID + group sequence"""
-
-        # Get teacher's initials-like code (base36 of teacher_id)
-        teacher_code = GroupCodeGenerator.base36_encode(teacher_id)
-
-        # Ensure teacher code is 1-2 characters
-        if len(teacher_code) > 2:
-            teacher_code = teacher_code[-2:]  # Take last 2 chars
-
-        # Add group sequence
-        if group_sequence <= 9:
-            return f"{teacher_code}{group_sequence}"
-        else:
-            return f"{teacher_code}{group_sequence:02d}"
-
-    @staticmethod
-    def generate_human_friendly_code(group_id: int) -> str:
-        """Generate very human-friendly codes"""
-
-        # Word-like patterns that are easy to remember and type
-        vowels = 'AEIOU'
-        consonants = 'BCDFGHJKLMNPQRSTVWXYZ'
-
-        if group_id <= 500:
-            # Pattern: CONSONANT + VOWEL + NUMBER (e.g., BA7, FE12, MI345)
-            consonant = consonants[(group_id - 1) % len(consonants)]
-            vowel = vowels[((group_id - 1) // len(consonants)) % len(vowels)]
-            number = group_id
-
-            if number <= 9:
-                return f"{consonant}{vowel}{number}"
-            elif number <= 99:
-                return f"{consonant}{vowel}{number:02d}"
-            else:
-                return f"{consonant}{vowel}{number:03d}"
-        else:
-            # For larger numbers, use double consonant-vowel pattern
-            # Pattern: CV + CV + NUMBER (e.g., BAFE7, MIKU12)
-            c1 = consonants[(group_id - 1) % len(consonants)]
-            v1 = vowels[((group_id - 1) // len(consonants)) % len(vowels)]
-            c2 = consonants[((group_id - 1) // (len(consonants) * len(vowels))) % len(consonants)]
-            v2 = vowels[((group_id - 1) // (len(consonants) * len(vowels) * len(consonants))) % len(vowels)]
-
-            number = ((group_id - 501) % 99) + 1
-            return f"{c1}{v1}{c2}{v2}{number:02d}"
+    else:
+        # For 1000+: AA01, AA02, AB01, etc.
+        first_letter = chr(ord('A') + ((group_id - 1000) // (26 * 99)) % 26)
+        second_letter = chr(ord('A') + ((group_id - 1000) // 99) % 26)
+        number = ((group_id - 1000) % 99) + 1
+        return f"{first_letter}{second_letter}{number:02d}"
 
 
-async def generate_unique_group_code(db: AsyncSession, teacher_id: int, strategy: str = "incremental") -> str:
+async def generate_group_code(db: AsyncSession) -> str:
     """
-    Generate a unique group code using specified strategy
-
-    Strategies:
-    - "incremental": Based on total group count (A1, A2, B10, etc.)
-    - "teacher_based": Based on teacher ID + their group sequence
-    - "human_friendly": Easy to remember word-like patterns
-    - "random": Original random 8-character code
+    Generate the next incremental group code based on total groups created
     """
 
-    max_attempts = 50
+    # Get total number of groups ever created (including deleted ones)
+    # This ensures codes are always incremental and never reused
+    total_groups_result = await db.execute(select(func.count(Group.id)))
+    total_groups = total_groups_result.scalar()
+
+    # Next group will be total + 1
+    next_group_id = total_groups + 1
+
+    max_attempts = 10
 
     for attempt in range(max_attempts):
+        # Generate code for this group ID
+        code = generate_incremental_code(next_group_id + attempt)
 
-        if strategy == "incremental":
-            # Get total group count to determine next ID
-            total_groups = await db.execute(select(func.count(Group.id)))
-            next_id = total_groups.scalar() + 1
-            code = GroupCodeGenerator.generate_incremental_code(next_id)
+        # Check if code already exists (shouldn't happen with incremental, but safety check)
+        existing_result = await db.execute(select(Group).filter(Group.code == code))
+        existing = existing_result.scalar_one_or_none()
 
-        elif strategy == "teacher_based":
-            # Get this teacher's group count
-            teacher_groups = await db.execute(
-                select(func.count(Group.id)).filter(Group.teacher_id == teacher_id)
-            )
-            group_sequence = teacher_groups.scalar() + 1
-            code = GroupCodeGenerator.generate_teacher_based_code(teacher_id, group_sequence)
-
-        elif strategy == "human_friendly":
-            # Get total group count for human-friendly pattern
-            total_groups = await db.execute(select(func.count(Group.id)))
-            next_id = total_groups.scalar() + 1
-            code = GroupCodeGenerator.generate_human_friendly_code(next_id)
-
-        else:  # "random" - original approach
-            alphabet = string.ascii_uppercase + string.digits
-            code = ''.join(secrets.choice(alphabet) for _ in range(8))
-
-        # Check if code already exists
-        existing = await db.execute(select(Group).filter(Group.code == code))
-        if not existing.scalar_one_or_none():
+        if not existing:
             return code
 
-        # If collision (rare), try again
-        continue
-
-    # Fallback to random if all attempts failed
-    alphabet = string.ascii_uppercase + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(8))
-
-
-# Examples of what each strategy produces:
-"""
-INCREMENTAL STRATEGY:
-Group 1: A1
-Group 2: B2  
-Group 10: A10
-Group 26: Z26
-Group 27: A27
-Group 100: A100
-Group 1000: AA01
-Group 1001: AA02
-
-TEACHER_BASED STRATEGY:
-Teacher ID 5, Group 1: 51
-Teacher ID 5, Group 2: 52
-Teacher ID 25, Group 1: P1 (25 in base36 = P)
-Teacher ID 25, Group 3: P3
-
-HUMAN_FRIENDLY STRATEGY:
-Group 1: BA1
-Group 2: CA2
-Group 26: BA26
-Group 100: BA100
-Group 501: BAFE01
-Group 502: CAFE02
-"""
+    # Fallback (should never happen with incremental approach)
+    return generate_incremental_code(next_group_id + max_attempts)
