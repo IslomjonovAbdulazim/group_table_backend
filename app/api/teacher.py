@@ -564,78 +564,6 @@ async def get_criteria(module_id: int, db: AsyncSession = Depends(get_db),
         raise HTTPException(status_code=500, detail="Error retrieving criteria")
 
 
-@router.post("/modules/{module_id}/criteria", response_model=CriteriaResponse)
-async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSession = Depends(get_db),
-                          teacher_id: int = Depends(require_teacher)):
-    try:
-        module_result = await db.execute(
-            select(Module)
-            .join(Group, Module.group_id == Group.id)
-            .filter(Module.id == module_id, Group.teacher_id == teacher_id, Module.is_active == True)
-        )
-        if not module_result.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Active module not found")
-
-        criteria_count = await db.execute(select(func.count(Criteria.id)).filter(Criteria.module_id == module_id))
-        if criteria_count.scalar() >= 6:
-            raise HTTPException(status_code=400, detail="Maximum 6 criteria allowed per module")
-
-        try:
-            grading_method = GradingMethod(criteria.grading_method)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid grading method")
-
-        db_criteria = Criteria(
-            name=criteria.name,
-            max_points=criteria.max_points,
-            grading_method=grading_method,
-            module_id=module_id
-        )
-        db.add(db_criteria)
-        await db.commit()
-        await db.refresh(db_criteria)
-        return db_criteria
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating criteria: {e}")
-        await db.rollback()
-        raise HTTPException(status_code=500, detail="Error creating criteria")
-
-
-@router.put("/criteria/{criteria_id}", response_model=CriteriaResponse)
-async def update_criteria(criteria_id: int, criteria: CriteriaUpdate, db: AsyncSession = Depends(get_db),
-                          teacher_id: int = Depends(require_teacher)):
-    try:
-        result = await db.execute(
-            select(Criteria)
-            .join(Module, Criteria.module_id == Module.id)
-            .join(Group, Module.group_id == Group.id)
-            .filter(Criteria.id == criteria_id, Group.teacher_id == teacher_id)
-        )
-        db_criteria = result.scalar_one_or_none()
-        if not db_criteria:
-            raise HTTPException(status_code=404, detail="Criteria not found")
-
-        try:
-            grading_method = GradingMethod(criteria.grading_method)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid grading method")
-
-        db_criteria.name = criteria.name
-        db_criteria.max_points = criteria.max_points
-        db_criteria.grading_method = grading_method
-        await db.commit()
-        await db.refresh(db_criteria)
-        return db_criteria
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating criteria: {e}")
-        await db.rollback()
-        raise HTTPException(status_code=500, detail="Error updating criteria")
-
-
 @router.delete("/criteria/{criteria_id}")
 async def delete_criteria(criteria_id: int, db: AsyncSession = Depends(get_db),
                           teacher_id: int = Depends(require_teacher)):
@@ -743,3 +671,84 @@ async def change_password(password_data: PasswordChange, db: AsyncSession = Depe
         logger.error(f"Error changing password: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail="Error changing password")
+
+
+# In app/api/teacher.py, update the create_criteria function:
+
+@router.post("/modules/{module_id}/criteria", response_model=CriteriaResponse)
+async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSession = Depends(get_db),
+                          teacher_id: int = Depends(require_teacher)):
+    try:
+        module_result = await db.execute(
+            select(Module)
+            .join(Group, Module.group_id == Group.id)
+            .filter(Module.id == module_id, Group.teacher_id == teacher_id, Module.is_active == True)
+        )
+        if not module_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Active module not found")
+
+        criteria_count = await db.execute(select(func.count(Criteria.id)).filter(Criteria.module_id == module_id))
+        if criteria_count.scalar() >= 6:
+            raise HTTPException(status_code=400, detail="Maximum 6 criteria allowed per module")
+
+        # Convert string to lowercase to match enum values
+        grading_method_str = criteria.grading_method.lower()
+
+        try:
+            grading_method = GradingMethod(grading_method_str)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid grading method")
+
+        db_criteria = Criteria(
+            name=criteria.name,
+            max_points=criteria.max_points,
+            grading_method=grading_method,
+            module_id=module_id
+        )
+        db.add(db_criteria)
+        await db.commit()
+        await db.refresh(db_criteria)
+        return db_criteria
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating criteria: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Error creating criteria")
+
+
+# Also update the update_criteria function:
+@router.put("/criteria/{criteria_id}", response_model=CriteriaResponse)
+async def update_criteria(criteria_id: int, criteria: CriteriaUpdate, db: AsyncSession = Depends(get_db),
+                          teacher_id: int = Depends(require_teacher)):
+    try:
+        result = await db.execute(
+            select(Criteria)
+            .join(Module, Criteria.module_id == Module.id)
+            .join(Group, Module.group_id == Group.id)
+            .filter(Criteria.id == criteria_id, Group.teacher_id == teacher_id)
+        )
+        db_criteria = result.scalar_one_or_none()
+        if not db_criteria:
+            raise HTTPException(status_code=404, detail="Criteria not found")
+
+        # Convert string to lowercase to match enum values
+        grading_method_str = criteria.grading_method.lower()
+
+        try:
+            grading_method = GradingMethod(grading_method_str)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid grading method")
+
+        db_criteria.name = criteria.name
+        db_criteria.max_points = criteria.max_points
+        db_criteria.grading_method = grading_method
+        await db.commit()
+        await db.refresh(db_criteria)
+        return db_criteria
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating criteria: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Error updating criteria")
