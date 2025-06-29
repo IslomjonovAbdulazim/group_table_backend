@@ -66,20 +66,27 @@ class LessonResponse(BaseModel):
 class CriteriaCreate(BaseModel):
     name: str
     max_points: int
-    grading_method: str
-
+    grading_method: str  # Accept string from frontend
 
 class CriteriaUpdate(BaseModel):
     name: str
     max_points: int
-    grading_method: str
-
+    grading_method: str  # Accept string from frontend
 
 class CriteriaResponse(BaseModel):
     id: int
     name: str
     max_points: int
-    grading_method: str
+    grading_method: str  # Keep as string, not enum
+
+    class Config:
+        from_attributes = True  # For SQLAlchemy compatibility
+
+        # Custom serializer for enum fields
+        json_encoders = {
+            # If we get an enum object, use its value
+            GradingMethod: lambda v: v.value if hasattr(v, 'value') else str(v)
+        }
 
 
 class GradeCreate(BaseModel):
