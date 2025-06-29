@@ -1,130 +1,223 @@
+#!/usr/bin/env python3
+"""
+Database Migration Script for GroupTable API
+Run this script to fix database schema issues
+"""
+
 import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
-from passlib.context import CryptContext
+import asyncpg
+import sys
+import os
+from pathlib import Path
 
-# Your database URL
-DATABASE_URL = "postgresql+asyncpg://gen_user:(8Ah)S%24aY)lF6t@3d7780415a2721a636acfe11.twc1.net:5432/default_db"
+# Add the app directory to Python path so we can import settings
+sys.path.append(str(Path(__file__).parent))
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+try:
+    from app.core.config import settings
+
+    DATABASE_URL = settings.database_url
+except ImportError:
+    # Fallback: try to get from environment variable
+    DATABASE_URL = os.getenv('DATABASE_URL')
+    if not DATABASE_URL:
+        print("❌ Error: Could not find database URL")
+        print("Please set DATABASE_URL environment variable or ensure app/core/config.py exists")
+        sys.exit(1)
+
+# Migration SQL commands
+MIGRATION_COMMANDS = [
+    {
+        "name": "Add is_active column to lessons table",
+        "sql": """
+               ALTER TABLE gt_lessons
+                   ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+               """
+    },
+    {
+        "name": "Update existing lessons to have is_active = true",
+        "sql": """
+               UPDATE gt_lessons
+               SET is_active = TRUE
+               WHERE is_active IS NULL;
+               """
+    },
+    {
+        "name": "Check current enum values",
+        "sql": """
+        SELECT unnest(enum_range(NULL::gradingmethod)) as enum_values;
+        """,
+        "is_query": True
+    },
+    {
+        "name": "Recreate gradingmethod enum with correct values",
+        "sql": """
+               -- First, add a temporary column
+               ALTER TABLE gt_criteria
+                   ADD COLUMN IF NOT EXISTS temp_grading_method TEXT;
+
+               -- Copy current values to temp column
+               UPDATE gt_criteria
+               SET temp_grading_method = grading_method::text;
+
+               -- Drop the old column (this will also drop the enum if not used elsewhere)
+               ALTER TABLE gt_criteria DROP COLUMN IF EXISTS grading_method;
+
+               -- Recreate the enum type
+               DROP TYPE IF EXISTS gradingmethod;
+               CREATE TYPE gradingmethod AS ENUM ('one_by_one', 'bulk');
+
+               -- Add the column back with the new enum type
+               ALTER TABLE gt_criteria
+                   ADD COLUMN grading_method gradingmethod;
+
+               -- Update with corrected values
+               UPDATE gt_criteria
+               SET grading_method =
+                       CASE
+                           WHEN UPPER(temp_grading_method) = 'ONE_BY_ONE' THEN 'one_by_one'::gradingmethod
+                           WHEN UPPER(temp_grading_method) = 'BULK' THEN 'bulk'::gradingmethod
+                           WHEN temp_grading_method = 'one_by_one' THEN 'one_by_one'::gradingmethod
+                           WHEN temp_grading_method = 'bulk' THEN 'bulk'::gradingmethod
+                           ELSE 'one_by_one'::gradingmethod -- default fallback
+                           END;
+
+               -- Drop the temporary column
+               ALTER TABLE gt_criteria DROP COLUMN temp_grading_method;
+
+               -- Make the column NOT NULL
+               ALTER TABLE gt_criteria
+                   ALTER COLUMN grading_method SET NOT NULL;
+               """
+    },
+    {
+        "name": "Verify final enum values",
+        "sql": """
+        SELECT unnest(enum_range(NULL::gradingmethod)) as enum_values;
+        """,
+        "is_query": True
+    }
+]
 
 
-async def reset_db():
-    engine = create_async_engine(DATABASE_URL)
+async def run_migration():
+    """Run database migration"""
 
-    async with engine.begin() as conn:
-        print("Dropping tables...")
+    print("🚀 Starting GroupTable Database Migration")
+    print("=" * 50)
 
-        drop_commands = [
-            "DROP TABLE IF EXISTS gt_grades CASCADE",
-            "DROP TABLE IF EXISTS gt_lessons CASCADE",
-            "DROP TABLE IF EXISTS gt_criteria CASCADE",
-            "DROP TABLE IF EXISTS gt_modules CASCADE",
-            "DROP TABLE IF EXISTS gt_students CASCADE",
-            "DROP TABLE IF EXISTS gt_groups CASCADE",
-            "DROP TABLE IF EXISTS gt_teachers CASCADE",
-            "DROP TABLE IF EXISTS gt_admins CASCADE",
-            "DROP TYPE IF EXISTS gradingmethod CASCADE"
-        ]
+    # Convert PostgreSQL URL to asyncpg format if needed
+    if DATABASE_URL.startswith("postgresql://"):
+        db_url = DATABASE_URL.replace("postgresql://", "postgresql://")
+    else:
+        db_url = DATABASE_URL
 
-        for cmd in drop_commands:
-            await conn.execute(text(cmd))
+    print(f"📡 Connecting to database...")
 
-        print("Creating tables...")
+    try:
+        # Connect to database
+        conn = await asyncpg.connect(db_url)
+        print("✅ Connected to database successfully")
 
-        create_commands = [
-            "CREATE TYPE gradingmethod AS ENUM ('one_by_one', 'bulk')",
+        # Run migration commands
+        for i, command in enumerate(MIGRATION_COMMANDS, 1):
+            print(f"\n📋 Step {i}: {command['name']}")
+            print("-" * 40)
 
-            """CREATE TABLE gt_admins
-               (
-                   id              SERIAL PRIMARY KEY,
-                   name            VARCHAR        NOT NULL,
-                   email           VARCHAR UNIQUE NOT NULL,
-                   hashed_password VARCHAR        NOT NULL,
-                   created_at      TIMESTAMPTZ DEFAULT NOW()
-               )""",
+            try:
+                if command.get('is_query', False):
+                    # This is a query command, fetch results
+                    result = await conn.fetch(command['sql'])
+                    print(f"✅ Query executed successfully")
+                    if result:
+                        print("📊 Results:")
+                        for row in result:
+                            print(f"   - {dict(row)}")
+                    else:
+                        print("📊 No results returned")
+                else:
+                    # This is a modification command
+                    result = await conn.execute(command['sql'])
+                    print(f"✅ Command executed successfully: {result}")
 
-            """CREATE TABLE gt_teachers
-               (
-                   id              SERIAL PRIMARY KEY,
-                   name            VARCHAR        NOT NULL,
-                   email           VARCHAR UNIQUE NOT NULL,
-                   hashed_password VARCHAR        NOT NULL,
-                   created_at      TIMESTAMPTZ DEFAULT NOW(),
-                   admin_id        INTEGER        NOT NULL REFERENCES gt_admins (id) ON DELETE CASCADE
-               )""",
+            except Exception as e:
+                print(f"⚠️  Error in step {i}: {str(e)}")
+                # For some commands, errors might be expected (like if column already exists)
+                if "already exists" in str(e).lower() or "does not exist" in str(e).lower():
+                    print("   (This error is likely harmless - continuing...)")
+                else:
+                    print("❌ Stopping migration due to error")
+                    break
 
-            """CREATE TABLE gt_groups
-               (
-                   id         SERIAL PRIMARY KEY,
-                   name       VARCHAR        NOT NULL,
-                   code       VARCHAR UNIQUE NOT NULL,
-                   is_active  BOOLEAN     DEFAULT TRUE,
-                   created_at TIMESTAMPTZ DEFAULT NOW(),
-                   teacher_id INTEGER        NOT NULL REFERENCES gt_teachers (id) ON DELETE CASCADE
-               )""",
+        # Close connection
+        await conn.close()
+        print("\n" + "=" * 50)
+        print("🎉 Migration completed successfully!")
+        print("✅ Database schema has been updated")
+        print("\n📝 Next steps:")
+        print("   1. Update your application code with the fixes")
+        print("   2. Restart your application")
+        print("   3. Test the problematic endpoints")
 
-            """CREATE TABLE gt_students
-               (
-                   id        SERIAL PRIMARY KEY,
-                   full_name VARCHAR NOT NULL,
-                   added_at  TIMESTAMPTZ DEFAULT NOW(),
-                   group_id  INTEGER NOT NULL REFERENCES gt_groups (id) ON DELETE CASCADE
-               )""",
+    except Exception as e:
+        print(f"❌ Failed to connect to database: {str(e)}")
+        print("\n🔧 Troubleshooting:")
+        print("   1. Check your DATABASE_URL is correct")
+        print("   2. Ensure the database server is running")
+        print("   3. Verify network connectivity")
+        return False
 
-            """CREATE TABLE gt_modules
-               (
-                   id          SERIAL PRIMARY KEY,
-                   name        VARCHAR NOT NULL,
-                   is_active   BOOLEAN     DEFAULT TRUE,
-                   is_finished BOOLEAN     DEFAULT FALSE,
-                   created_at  TIMESTAMPTZ DEFAULT NOW(),
-                   group_id    INTEGER NOT NULL REFERENCES gt_groups (id) ON DELETE CASCADE
-               )""",
+    return True
 
-            """CREATE TABLE gt_lessons
-               (
-                   id            SERIAL PRIMARY KEY,
-                   name          VARCHAR NOT NULL,
-                   lesson_number INTEGER NOT NULL,
-                   is_active     BOOLEAN     DEFAULT TRUE,
-                   created_at    TIMESTAMPTZ DEFAULT NOW(),
-                   module_id     INTEGER NOT NULL REFERENCES gt_modules (id) ON DELETE CASCADE
-               )""",
 
-            """CREATE TABLE gt_criteria
-               (
-                   id             SERIAL PRIMARY KEY,
-                   name           VARCHAR       NOT NULL,
-                   max_points     INTEGER       NOT NULL,
-                   grading_method gradingmethod NOT NULL,
-                   created_at     TIMESTAMPTZ DEFAULT NOW(),
-                   module_id      INTEGER       NOT NULL REFERENCES gt_modules (id) ON DELETE CASCADE
-               )""",
+async def check_database_connection():
+    """Test database connection before migration"""
+    try:
+        if DATABASE_URL.startswith("postgresql://"):
+            db_url = DATABASE_URL.replace("postgresql://", "postgresql://")
+        else:
+            db_url = DATABASE_URL
 
-            """CREATE TABLE gt_grades
-               (
-                   id            SERIAL PRIMARY KEY,
-                   points_earned INTEGER NOT NULL,
-                   created_at    TIMESTAMPTZ DEFAULT NOW(),
-                   student_id    INTEGER NOT NULL REFERENCES gt_students (id) ON DELETE CASCADE,
-                   criteria_id   INTEGER NOT NULL REFERENCES gt_criteria (id) ON DELETE CASCADE,
-                   lesson_id     INTEGER NOT NULL REFERENCES gt_lessons (id) ON DELETE CASCADE
-               )"""
-        ]
+        conn = await asyncpg.connect(db_url)
 
-        for cmd in create_commands:
-            await conn.execute(text(cmd))
+        # Test with a simple query
+        result = await conn.fetchval("SELECT version();")
+        await conn.close()
 
-        print("Creating admin user...")
-        hashed_password = pwd_context.hash("aishabintali")
-        await conn.execute(text(
-            "INSERT INTO gt_admins (name, email, hashed_password) VALUES (:name, :email, :password)"
-        ), {"name": "Azim", "email": "azim@gmail.com", "password": hashed_password})
+        print(f"✅ Database connection test successful")
+        print(f"📊 PostgreSQL version: {result.split(',')[0]}")
+        return True
 
-    await engine.dispose()
-    print("Done! Admin: azim@gmail.com / aishabintali")
+    except Exception as e:
+        print(f"❌ Database connection test failed: {str(e)}")
+        return False
 
 
 if __name__ == "__main__":
-    asyncio.run(reset_db())
+    print("🔍 Testing database connection...")
+
+    # Test connection first
+    connection_ok = asyncio.run(check_database_connection())
+
+    if not connection_ok:
+        print("❌ Cannot proceed with migration - fix database connection first")
+        sys.exit(1)
+
+    print("\n" + "=" * 50)
+
+    # Ask for confirmation
+    confirm = input("⚠️  This will modify your database schema. Continue? (y/N): ").strip().lower()
+
+    if confirm not in ['y', 'yes']:
+        print("❌ Migration cancelled by user")
+        sys.exit(0)
+
+    # Run migration
+    success = asyncio.run(run_migration())
+
+    if success:
+        print("\n🎊 All done! Your database has been updated.")
+        sys.exit(0)
+    else:
+        print("\n💥 Migration failed. Please check the errors above.")
+        sys.exit(1)

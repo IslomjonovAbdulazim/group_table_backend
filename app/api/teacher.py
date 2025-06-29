@@ -675,6 +675,8 @@ async def change_password(password_data: PasswordChange, db: AsyncSession = Depe
 
 # In app/api/teacher.py, update the create_criteria function:
 
+# Find this function in app/api/teacher.py and replace it:
+
 @router.post("/modules/{module_id}/criteria", response_model=CriteriaResponse)
 async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSession = Depends(get_db),
                           teacher_id: int = Depends(require_teacher)):
@@ -691,18 +693,19 @@ async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSes
         if criteria_count.scalar() >= 6:
             raise HTTPException(status_code=400, detail="Maximum 6 criteria allowed per module")
 
-        # Convert string to lowercase to match enum values
+        # *** ADD THIS CONVERSION CODE ***
         grading_method_str = criteria.grading_method.lower()
 
         try:
             grading_method = GradingMethod(grading_method_str)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid grading method")
+        # *** END OF NEW CODE ***
 
         db_criteria = Criteria(
             name=criteria.name,
             max_points=criteria.max_points,
-            grading_method=grading_method,
+            grading_method=grading_method,  # Use the converted value
             module_id=module_id
         )
         db.add(db_criteria)
@@ -717,7 +720,7 @@ async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSes
         raise HTTPException(status_code=500, detail="Error creating criteria")
 
 
-# Also update the update_criteria function:
+# Also find and update this function:
 @router.put("/criteria/{criteria_id}", response_model=CriteriaResponse)
 async def update_criteria(criteria_id: int, criteria: CriteriaUpdate, db: AsyncSession = Depends(get_db),
                           teacher_id: int = Depends(require_teacher)):
@@ -732,17 +735,18 @@ async def update_criteria(criteria_id: int, criteria: CriteriaUpdate, db: AsyncS
         if not db_criteria:
             raise HTTPException(status_code=404, detail="Criteria not found")
 
-        # Convert string to lowercase to match enum values
+        # *** ADD THIS CONVERSION CODE ***
         grading_method_str = criteria.grading_method.lower()
 
         try:
             grading_method = GradingMethod(grading_method_str)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid grading method")
+        # *** END OF NEW CODE ***
 
         db_criteria.name = criteria.name
         db_criteria.max_points = criteria.max_points
-        db_criteria.grading_method = grading_method
+        db_criteria.grading_method = grading_method  # Use the converted value
         await db.commit()
         await db.refresh(db_criteria)
         return db_criteria
