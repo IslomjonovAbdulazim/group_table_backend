@@ -564,7 +564,7 @@ async def get_criteria(module_id: int, db: AsyncSession = Depends(get_db),
         raise HTTPException(status_code=500, detail="Error retrieving criteria")
 
 
-# Replace ONLY the create_criteria function in your app/api/teacher.py with this debug version:
+# Replace your create_criteria function with this WORKING version:
 
 @router.post("/modules/{module_id}/criteria", response_model=CriteriaResponse)
 async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSession = Depends(get_db),
@@ -591,29 +591,21 @@ async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSes
         try:
             grading_method = GradingMethod(grading_method_str)
             logger.info(f"✅ Enum conversion successful: {grading_method}")
-            logger.info(f"🔍 Enum name: {grading_method.name}")
-            logger.info(f"🔍 Enum value: {grading_method.value}")
-            logger.info(f"🔍 Enum type: {type(grading_method)}")
         except ValueError as ve:
             logger.error(f"❌ Invalid grading method: {grading_method_str}, error: {ve}")
             raise HTTPException(status_code=400, detail="Invalid grading method")
 
-        # Test what SQLAlchemy will actually send
-        logger.info(f"🔍 About to create Criteria object...")
-
+        # FORCE USE THE STRING VALUE INSTEAD OF ENUM OBJECT
         db_criteria = Criteria(
             name=criteria.name,
             max_points=criteria.max_points,
-            grading_method=grading_method,
+            grading_method=grading_method.value,  # ← THE FIX: Use .value to get string
             module_id=module_id
         )
 
-        logger.info(f"🔍 Criteria object created, grading_method attr: {db_criteria.grading_method}")
-        logger.info(f"🔍 Criteria object grading_method value: {db_criteria.grading_method.value}")
+        logger.info(f"🔍 Using grading_method value: {grading_method.value}")
 
         db.add(db_criteria)
-        logger.info(f"🔍 About to commit to database...")
-
         await db.commit()
         await db.refresh(db_criteria)
         logger.info(f"✅ Criteria created successfully: {db_criteria.id}")
@@ -625,6 +617,9 @@ async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSes
         logger.error(f"❌ Error creating criteria: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail="Error creating criteria")
+
+
+# Also replace your update_criteria function:
 
 @router.put("/criteria/{criteria_id}", response_model=CriteriaResponse)
 async def update_criteria(criteria_id: int, criteria: CriteriaUpdate, db: AsyncSession = Depends(get_db),
@@ -655,7 +650,10 @@ async def update_criteria(criteria_id: int, criteria: CriteriaUpdate, db: AsyncS
 
         db_criteria.name = criteria.name
         db_criteria.max_points = criteria.max_points
-        db_criteria.grading_method = grading_method
+        db_criteria.grading_method = grading_method.value  # ← THE FIX: Use .value to get string
+
+        logger.info(f"🔍 Using grading_method value: {grading_method.value}")
+
         await db.commit()
         await db.refresh(db_criteria)
         logger.info(f"✅ Criteria updated successfully: {criteria_id}")
