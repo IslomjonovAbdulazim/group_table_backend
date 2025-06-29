@@ -12,7 +12,7 @@ from ..models.lesson import Lesson
 from ..models.criteria import Criteria, GradingMethod
 from ..models.grade import Grade
 from ..models.teacher import Teacher
-from ..utils.code_generator import generate_group_code
+from ..utils.code_generator import generate_unique_group_code
 from ..utils.calculations import calculate_student_totals
 import logging
 
@@ -129,26 +129,31 @@ async def create_group(group: GroupCreate, db: AsyncSession = Depends(get_db),
         if groups_count.scalar() >= 6:
             raise HTTPException(status_code=400, detail="Maximum 6 active groups allowed")
 
-        code = generate_group_code()
-        while True:
-            existing_group = await db.execute(select(Group).filter(Group.code == code))
-            if not existing_group.scalar_one_or_none():
-                break
-            code = generate_group_code()
+        # Generate smart, memorable group code
+        # Choose your preferred strategy:
+        code = await generate_unique_group_code(db, teacher_id, strategy="human_friendly")
+
+        # Alternative strategies you can try:
+        # code = await generate_unique_group_code(db, teacher_id, strategy="incremental")
+        # code = await generate_unique_group_code(db, teacher_id, strategy="teacher_based")
+        # code = await generate_unique_group_code(db, teacher_id, strategy="random")
+
+        logger.info(f"🔄 Generated group code: {code} for teacher {teacher_id}")
 
         db_group = Group(name=group.name, code=code, teacher_id=teacher_id)
         db.add(db_group)
         await db.commit()
         await db.refresh(db_group)
+
+        logger.info(f"✅ Group created with code: {code}")
         return db_group
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error creating group: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail="Error creating group")
-
-
 @router.put("/groups/{group_id}", response_model=GroupResponse)
 async def update_group(group_id: int, group: GroupUpdate, db: AsyncSession = Depends(get_db),
                        teacher_id: int = Depends(require_teacher)):
