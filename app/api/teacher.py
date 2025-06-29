@@ -572,7 +572,6 @@ async def get_criteria(module_id: int, db: AsyncSession = Depends(get_db),
 
 
 # Replace your create_criteria function with this WORKING version:
-
 @router.post("/modules/{module_id}/criteria", response_model=CriteriaResponse)
 async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSession = Depends(get_db),
                           teacher_id: int = Depends(require_teacher)):
@@ -591,26 +590,27 @@ async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSes
         if criteria_count.scalar() >= 6:
             raise HTTPException(status_code=400, detail="Maximum 6 criteria allowed per module")
 
-        # Convert to lowercase to match enum values
+        # Convert to lowercase for validation
         grading_method_str = criteria.grading_method.lower()
         logger.info(f"🔄 Converting grading method: '{criteria.grading_method}' -> '{grading_method_str}'")
 
-        try:
-            grading_method = GradingMethod(grading_method_str)
-            logger.info(f"✅ Enum conversion successful: {grading_method}")
-        except ValueError as ve:
-            logger.error(f"❌ Invalid grading method: {grading_method_str}, error: {ve}")
-            raise HTTPException(status_code=400, detail="Invalid grading method")
+        # Validate against enum values (but store as string)
+        valid_values = [e.value for e in GradingMethod]  # ['one_by_one', 'bulk']
+        if grading_method_str not in valid_values:
+            logger.error(f"❌ Invalid grading method: {grading_method_str}")
+            raise HTTPException(status_code=400, detail=f"Invalid grading method. Must be one of: {valid_values}")
 
-        # FORCE USE THE STRING VALUE INSTEAD OF ENUM OBJECT
+        logger.info(f"✅ Validation successful for: {grading_method_str}")
+
+        # Store string directly - no enum conversion needed
         db_criteria = Criteria(
             name=criteria.name,
             max_points=criteria.max_points,
-            grading_method=grading_method.value,  # ← THE FIX: Use .value to get string
+            grading_method=grading_method_str,  # ← Store as STRING directly
             module_id=module_id
         )
 
-        logger.info(f"🔍 Using grading_method value: {grading_method.value}")
+        logger.info(f"🔍 Using grading_method string: {grading_method_str}")
 
         db.add(db_criteria)
         await db.commit()
@@ -625,8 +625,8 @@ async def create_criteria(module_id: int, criteria: CriteriaCreate, db: AsyncSes
         await db.rollback()
         raise HTTPException(status_code=500, detail="Error creating criteria")
 
-
 # Also replace your update_criteria function:
+
 
 @router.put("/criteria/{criteria_id}", response_model=CriteriaResponse)
 async def update_criteria(criteria_id: int, criteria: CriteriaUpdate, db: AsyncSession = Depends(get_db),
@@ -644,22 +644,24 @@ async def update_criteria(criteria_id: int, criteria: CriteriaUpdate, db: AsyncS
         if not db_criteria:
             raise HTTPException(status_code=404, detail="Criteria not found")
 
-        # Convert to lowercase to match enum values
+        # Convert to lowercase for validation
         grading_method_str = criteria.grading_method.lower()
         logger.info(f"🔄 Converting grading method: '{criteria.grading_method}' -> '{grading_method_str}'")
 
-        try:
-            grading_method = GradingMethod(grading_method_str)
-            logger.info(f"✅ Enum conversion successful: {grading_method}")
-        except ValueError:
+        # Validate against enum values (but store as string)
+        valid_values = [e.value for e in GradingMethod]  # ['one_by_one', 'bulk']
+        if grading_method_str not in valid_values:
             logger.error(f"❌ Invalid grading method: {grading_method_str}")
-            raise HTTPException(status_code=400, detail="Invalid grading method")
+            raise HTTPException(status_code=400, detail=f"Invalid grading method. Must be one of: {valid_values}")
 
+        logger.info(f"✅ Validation successful for: {grading_method_str}")
+
+        # Update with string values directly
         db_criteria.name = criteria.name
         db_criteria.max_points = criteria.max_points
-        db_criteria.grading_method = grading_method.value  # ← THE FIX: Use .value to get string
+        db_criteria.grading_method = grading_method_str  # ← Store as STRING, not enum
 
-        logger.info(f"🔍 Using grading_method value: {grading_method.value}")
+        logger.info(f"🔍 Using grading_method string: {grading_method_str}")
 
         await db.commit()
         await db.refresh(db_criteria)
