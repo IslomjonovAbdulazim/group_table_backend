@@ -4,7 +4,7 @@ from sqlalchemy import select, func
 from pydantic import BaseModel
 from typing import List
 from ..core.database import get_db
-from ..core.auth import get_password_hash, require_admin
+from ..core.auth import get_password_hash, require_admin, verify_password
 from ..models.admin import Admin
 from ..models.teacher import Teacher
 from ..models.group import Group
@@ -41,6 +41,15 @@ class TeacherStats(BaseModel):
     modules: int
     lessons: int
     total_grades: int
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class TeacherPasswordChange(BaseModel):
+    new_password: str
 
 
 @router.get("/teachers", response_model=List[TeacherResponse])
@@ -177,3 +186,48 @@ async def get_teacher_stats(teacher_id: int, db: AsyncSession = Depends(get_db),
     except Exception as e:
         logger.error(f"Error getting teacher stats: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving teacher statistics")
+
+
+# Password management
+@router.post("/change-password")
+async def change_admin_password(password_data: PasswordChange, db: AsyncSession = Depends(get_db),
+                               admin_id: int = Depends(require_admin)):
+    try:
+        result = await db.execute(select(Admin).filter(Admin.id == admin_id))
+        admin = result.scalar_one_or_none()
+        if not admin:
+            raise HTTPException(status_code=404, detail="Admin not found")
+
+        if not verify_password(password_data.current_password, admin.hashed_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+        admin.hashed_password = get_password_hash(password_data.new_password)
+        await db.commit()
+        return {"message": "Admin password changed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error changing admin password: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Error changing admin password")
+
+
+@router.post("/teachers/{teacher_id}/change-password")
+async def change_teacher_password(teacher_id: int, password_data: TeacherPasswordChange,
+                                 db: AsyncSession = Depends(get_db),
+                                 admin_id: int = Depends(require_admin)):
+    try:
+        result = await db.execute(select(Teacher).filter(Teacher.id == teacher_id, Teacher.admin_id == admin_id))
+        teacher = result.scalar_one_or_none()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        teacher.hashed_password = get_password_hash(password_data.new_password)
+        await db.commit()
+        return {"message": "Teacher password changed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error changing teacher password: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Error changing teacher password")
