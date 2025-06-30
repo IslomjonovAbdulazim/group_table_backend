@@ -19,7 +19,6 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
 # Request/Response Models
 class GroupCreate(BaseModel):
     name: str
@@ -437,6 +436,20 @@ async def get_lessons(module_id: int, db: AsyncSession = Depends(get_db),
         logger.error(f"Error getting lessons: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving lessons")
 
+@router.get("/groups/{group_id}", response_model=GroupResponse)
+async def get_group(group_id: int, db: AsyncSession = Depends(get_db),
+                    teacher_id: int = Depends(require_teacher)):
+    try:
+        result = await db.execute(select(Group).filter(Group.id == group_id, Group.teacher_id == teacher_id))
+        db_group = result.scalar_one_or_none()
+        if not db_group:
+            raise HTTPException(status_code=404, detail="Group not found")
+        return db_group
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting group: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving group")
 
 @router.post("/modules/{module_id}/lessons/start", response_model=LessonResponse)
 async def start_lesson(module_id: int, db: AsyncSession = Depends(get_db),
